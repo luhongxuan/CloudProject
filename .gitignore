@@ -1,0 +1,15 @@
+# Created by venv; see https://docs.python.org/3/library/venv.html
+*
+# 忽略整個虛擬環境
+CLOUDPROJECT/
+CLOUDPROJECT/Lib
+
+# Python 暫存檔
+__pycache__/
+*.pyc
+
+# SQLite 資料庫（可選）
+*.db
+
+# 系統檔案
+.DS_Store
