@@ -1,94 +1,176 @@
 # ============================================
-# MLB 投手特徵資料自動生成（pybaseball 2.x 版本）
-# 依賽季逐球資料 → 匯總為逐場 → 計算特徵 → 輸出 Excel
+# MLB 全先發投手資料生成器 (for XGBoost: QS)
 # ============================================
+import os
 import pandas as pd
 import numpy as np
 from datetime import timedelta
-from pybaseball import playerid_lookup, statcast_pitcher, pitching_stats, team_batting
-
-# ========= 使用者參數 =========
-PITCHER_FIRST = "Yoshinobu"
-PITCHER_LAST  = "Yamamoto"
-YEAR = 2025
-START_DT = f"{YEAR}-01-01"
-END_DT   = f"{YEAR}-12-31"
-OUTFILE  = f"pitcher_record/{PITCHER_FIRST}_{PITCHER_LAST}_features_{YEAR}.xlsx".replace(" ", "_")
-
-# ========= 取得 MLBAM 投手 ID =========
-pid_df = playerid_lookup(PITCHER_LAST, PITCHER_FIRST)
-if pid_df.empty:
-    raise RuntimeError("找不到球員 ID，請確認姓名拼字。")
-PITCHER_ID = int(pid_df["key_mlbam"].iloc[0])
-print(f"MLBAM ID of {PITCHER_FIRST} {PITCHER_LAST}: {PITCHER_ID}")
-
-# ========= 抓逐球資料（Statcast） =========
-pitches = statcast_pitcher(START_DT, END_DT, PITCHER_ID)
-if pitches.empty:
-    raise RuntimeError("此年度沒有 Statcast 投球資料。")
-pitches["game_date"] = pd.to_datetime(pitches["game_date"])
-DATE = "2025-10-25"
-
-# 取一天並排序（確保時序正確）
-day = pitches.copy()
-day["game_date"] = pd.to_datetime(day["game_date"])
-day = day[day["game_date"].dt.strftime("%Y-%m-%d") == DATE].copy()
-
-# 標準化半局標記
-if "inning_topbot" in day.columns:
-    day["inning_topbot"] = day["inning_topbot"].astype(str).str.strip().str.lower()
-
-sort_cols = [c for c in ["game_pk","inning","inning_topbot","at_bat_number","pitch_number"] if c in day.columns]
-day = day.sort_values(sort_cols)
-
-# 先用「同一場+同半局」的正向 diff 做基礎的 outs_delta
-day["outs_when_up"] = pd.to_numeric(day["outs_when_up"], errors="coerce").fillna(0)
-group_keys = [k for k in ["game_pk","inning_topbot"] if k in day.columns]
-day["outs_delta"] = (
-    day.groupby(group_keys)["outs_when_up"]
-       .diff().clip(lower=0).fillna(0).astype(int)
+from time import sleep
+from tqdm import tqdm
+from pybaseball import (
+    playerid_lookup,
+    statcast_pitcher,
+    pitching_stats_range,
+    pitching_stats,
+    team_batting,
+    cache
 )
 
-extra = pd.DataFrame([{
-    "game_date": day["game_date"].iloc[-1],
-    "inning": day["inning"].iloc[-1] + 1 if "inning" in day.columns else np.nan,
-    "outs_when_up": 0,
-    "outs_delta": 0
-}])
+# ===== 啟用快取 =====
+cache.enable()
 
-day = pd.concat([day, extra], ignore_index=True)
+# ===== 年份與輸出資料夾 =====
+YEAR = 2024
+START_DT, END_DT = f"{YEAR}-03-20", f"{YEAR}-11-02"
+OUTDIR = f"machine_learning/pitcher_record/all_pitchers_{YEAR}"
+os.makedirs(OUTDIR, exist_ok=True)
 
-# print(day[["game_date","inning","outs_when_up","outs_delta"]].to_string(index=True))
+# ===== 球隊縮寫映射表 =====
+TEAM_ABBREVIATION_MAP = {
+    'BAL':'BAL','BOS':'BOS','NY':'NYY','TB':'TBR','TOR':'TOR',
+    'CH':'CHW','CLE':'CLE','DET':'DET','KC':'KCR','MIN':'MIN',
+    'HO':'HOU','LA':'LAA','OA':'OAK','SEA':'SEA','TX':'TEX',
+    'ATL':'ATL','MI':'MIA','NYM':'NYM','PHI':'PHI','WAS':'WSN',
+    'CHC':'CHC','CIN':'CIN','MIL':'MIL','PIT':'PIT','STL':'STL',
+    'ARI':'ARI','AZ':'ARI','COL':'COL','LAD':'LAD','SD':'SDP','SF':'SFG',
+    'CHW':'CHW','LAA':'LAA','NYY':'NYY','NYM':'NYM','TBR':'TBR',
+    'WSN':'WSN','WSH':'WSN','MIA':'MIA','KCR':'KCR','CWS':'CHW','TBD':'TBR'
+}
 
-# ---- 簡單修正：補上半局最後一球的「第3個出局」 ----
-# 若出現「上一列=2、下一列=0」且同一場，且半局或局數改變，就把前一列的 outs_delta +1
-idx = day.index.to_list()
-for i in range(1, len(day)):
-    prev, cur = idx[i-1], idx[i]
-    print(i)
+# ===== 抓賽季投手名單 =====
+ps = pitching_stats(YEAR, YEAR, qual=0)
+starters = ps[ps['GS'] > 0][['Name','Team','ERA','WHIP']].drop_duplicates()
+print(f"✅ 抓到 {len(starters)} 位先發投手")
 
-    same_game = ("game_pk" in day.columns) and (day.at[prev, "game_pk"] == day.at[cur, "game_pk"])
-    if not same_game:
+# ===== FanGraphs 球隊打擊表 =====
+fg = team_batting(YEAR).copy()
+fg["Team_std"] = fg["Team"].map(TEAM_ABBREVIATION_MAP).fillna(fg["Team"])
+
+# ===== 逐一處理投手 =====
+for idx, row in tqdm(starters.iterrows(), total=len(starters), desc="Processing pitchers"):
+    try:
+        print(row["Name"])
+        name = row["Name"]  # ✅ 正確取名字
+        if not isinstance(name, str) or len(name.strip()) == 0:
+            print(f"⚠️ 跳過無效名字: {name}")
+            continue
+
+        # 拆名（保險處理）
+        print("test")
+        parts = name.split(" ", 1)
+        first = parts[0]
+        last = parts[1] if len(parts) > 1 else ""
+
+        pid = playerid_lookup(last, first)
+        if pid.empty:
+            print(f"⚠️ 找不到 {name} 的 MLBAM ID，略過")
+            continue
+        MLBAM = int(pid["key_mlbam"].iloc[0])
+        OUTFILE = f"{OUTDIR}/{name.replace(' ','_')}_{YEAR}_features.xlsx"
+
+        # === Statcast ===
+        pitches = statcast_pitcher(START_DT, END_DT, MLBAM)
+        if pitches.empty:
+            print(f"⚠️ {name} 沒有 Statcast 資料")
+            continue
+        pitches["game_date"] = pd.to_datetime(pitches["game_date"])
+        pitches = pitches.sort_values(["game_pk","inning","inning_topbot","at_bat_number","pitch_number"])
+
+        # 主客場判斷
+        if "inning_topbot" in pitches.columns:
+            pitches["inning_topbot"] = pitches["inning_topbot"].astype(str).str.strip().str.lower()
+        def is_home_for_game(df):
+            return 1 if (df["inning_topbot"].str.lower()=="top").mean() >= 0.5 else 0
+        home_flag = pitches.groupby("game_pk").apply(is_home_for_game).rename("is_home")
+        teams = pitches.groupby("game_pk")[["home_team","away_team","game_date"]].agg(lambda s: s.iloc[0])
+        teams["opp_team"] = np.where(home_flag.values==1, teams["away_team"], teams["home_team"])
+        teams = teams.join(home_flag)
+        teams["game_date"] = pd.to_datetime(teams["game_date"])
+        dates = teams["game_date"].dt.strftime("%Y-%m-%d").unique().tolist()
+
+        # === Baseball-Reference 逐場 ===
+        rows = []
+        for d in dates:
+            print(d)
+            day = pitching_stats_range(d, d)
+            if day is None or day.empty:
+                continue
+            p = day[day["Name"] == name]
+            if p.empty: continue
+            def num(s, default=np.nan): return pd.to_numeric(s, errors="coerce").fillna(default)
+            rec = {
+                "pitcher": name, "game_date": d,
+                "IP": float(num(p["IP"]).iloc[0]) if "IP" in p.columns else np.nan,
+                "ER": int(num(p["ER"],0).iloc[0]) if "ER" in p.columns else np.nan,
+                "R":  int(num(p["R"],0).iloc[0]) if "R" in p.columns else np.nan,
+                "H":  int(num(p["H"],0).iloc[0]) if "H" in p.columns else np.nan,
+                "BB": int(num(p["BB"],0).iloc[0]) if "BB" in p.columns else np.nan,
+                "SO": int(num(p["SO"],0).iloc[0]) if "SO" in p.columns else np.nan,
+                "Pit":int(num(p["Pit"],np.nan).iloc[0]) if "Pit" in p.columns else np.nan,
+                "Team":p["Team"].iloc[0] if "Team" in p.columns else None,
+                "Opp": p["Opp"].iloc[0]  if "Opp"  in p.columns else None,
+            }
+            rows.append(rec)
+
+        games = pd.DataFrame(rows)
+        if games.empty:
+            print(f"⚠️ {name} 無逐場資料")
+            continue
+        games["game_date"] = pd.to_datetime(games["game_date"])
+        games = games.sort_values("game_date").reset_index(drop=True)
+
+        # 若沒 Pit → 用 Statcast 補
+        if games["Pit"].isna().any():
+            pit_statcast = (
+                pitches.groupby("game_pk").size().rename("Pit_sc").reset_index()
+                .merge(teams[["game_pk","game_date"]].reset_index(), on="game_pk", how="left")
+                .groupby("game_date")["Pit_sc"].sum().reset_index()
+            )
+            games = games.merge(pit_statcast, on="game_date", how="left")
+            games["Pit"] = games["Pit"].fillna(games["Pit_sc"]).astype("Int64")
+            games.drop(columns=["Pit_sc"], inplace=True, errors="ignore")
+
+        # 合併主客場
+        games = games.merge(
+            teams.reset_index()[["game_pk","game_date","opp_team","is_home"]],
+            on="game_date", how="left"
+        ).drop_duplicates(subset=["game_pk","game_date"]).reset_index(drop=True)
+
+        # 休息天數 & 近期平均
+        games["rest_days"] = games["game_date"].diff().dt.days.fillna(5).astype(int)
+        games["avg_ip_last3"] = games["IP"].rolling(3, min_periods=1).mean().round(2)
+        games["avg_er_last3"] = games["ER"].rolling(3, min_periods=1).mean().round(2)
+
+        # 對手 OPS / wOBA
+        games["opp_team_std"] = games["opp_team"].map(TEAM_ABBREVIATION_MAP).fillna(games["opp_team"])
+        games = games.merge(
+            fg.rename(columns={"Team_std":"opp_team_std"})[["opp_team_std","OPS","wOBA"]],
+            on="opp_team_std", how="left"
+        )
+        games.rename(columns={"OPS":"opp_ops"}, inplace=True)
+
+        # 投手季級資料
+        season_era, season_whip = row["ERA"], row["WHIP"]
+        hand = pitches["p_throws"].dropna().mode()
+        hand = str(hand.iloc[0]) if not hand.empty else None
+        games["season_era"] = season_era
+        games["season_whip"] = season_whip
+        games["hand"] = hand
+
+        # 輸出
+        out_cols = [
+            "pitcher","game_date","IP","ER","R","H","BB","SO",
+            "Pit","rest_days","opp_ops","is_home",
+            "avg_ip_last3","avg_er_last3",
+            "opp_team","Team","season_era","season_whip","hand"
+        ]
+        games_out = games[out_cols].sort_values("game_date")
+        games_out.to_excel(OUTFILE, index=False)
+        print(f"✅ 完成 {name} -> {OUTFILE}")
+        sleep(2)
+    except Exception as e:
+        print(f"❌ {row.get('Name', idx)} 錯誤: {e}")
+        raise e
         continue
-
-    prev_out = day.at[prev, "outs_when_up"]
-    cur_out  = day.at[cur, "outs_when_up"]
-
-    # 半局/局數是否換了（任何一種變化都算半局結束）
-    half_changed = False
-    if "inning_topbot" in day.columns and day.at[prev,"inning_topbot"] != day.at[cur,"inning_topbot"]:
-        half_changed = True
-    if "inning" in day.columns and day.at[prev,"inning"] != day.at[cur,"inning"]:
-        half_changed = True
-
-    if prev_out == 2 and cur_out == 0 and half_changed:
-        day.at[prev, "outs_delta"] += 1  # 給上一球補上第3個出局
-
-# 只印你要看的兩欄（可加 inning 方便檢查）
-print(day[["game_date","inning","outs_when_up","outs_delta"]].to_string(index=True))
-
-# 當天每場的總出局與 IP
-outs_by_game = day.groupby("game_pk")["outs_delta"].sum().rename("outs")
-ip_by_game = (outs_by_game / 3.0).round(2).rename("IP_num")
-print("\n=== 當天逐場合計 ===")
-print(pd.concat([outs_by_game, ip_by_game], axis=1).to_string())
+driver.close()
+print("🎯 全部投手處理完畢！")
