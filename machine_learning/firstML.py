@@ -2,6 +2,7 @@
 # MLB 投手特徵資料自動生成（pybaseball 2.x 版本）
 # 依賽季逐球資料 → 匯總為逐場 → 計算特徵 → 輸出 Excel
 # ============================================
+import os
 import pandas as pd
 import numpy as np
 from datetime import timedelta
@@ -13,7 +14,7 @@ PITCHER_LAST  = "Yamamoto"
 YEAR = 2025
 START_DT = f"{YEAR}-01-01"
 END_DT   = f"{YEAR}-12-31"
-OUTFILE  = f"pitcher_record/{PITCHER_FIRST}_{PITCHER_LAST}_features_{YEAR}.xlsx".replace(" ", "_")
+OUTFILE  = f"machine_learning/pitcher_record/{PITCHER_FIRST}_{PITCHER_LAST}_features_{YEAR}.xlsx".replace(" ", "_")
 
 # ========= 取得 MLBAM 投手 ID =========
 pid_df = playerid_lookup(PITCHER_LAST, PITCHER_FIRST)
@@ -43,6 +44,7 @@ def outs_from_half_inning(df):
     )
 
     extra = pd.DataFrame([{
+        "game_pk": df["game_pk"].iloc[-1],
         "game_date": df["game_date"].iloc[-1],
         "inning": df["inning"].iloc[-1] + 1 if "inning" in df.columns else np.nan,
         "outs_when_up": 0,
@@ -188,5 +190,9 @@ out_cols = [
     "is_home", "park_factor", "temp_c", "humidity",
     "season_era", "season_whip", "hand", "pitches", "R_est", "home_abbr","away_abbr"
 ]
+
+if os.path.exists(OUTFILE):
+    os.remove(OUTFILE)
+
 games[out_cols].to_excel(OUTFILE, index=False)
 print(f"✅ Done. 輸出：{OUTFILE}")
