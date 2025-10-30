@@ -92,7 +92,7 @@ for idx, row in tqdm(starters.iterrows(), total=len(starters), desc="Processing 
         rows = []
         for d in dates:
             print(d)
-            day = pitching_stats_range(d, d)
+            day, driver = pitching_stats_range(d, d)
             if day is None or day.empty:
                 continue
             p = day[day["Name"] == name]
