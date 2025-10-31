@@ -12,11 +12,54 @@ from datetime import timedelta
 from pybaseball import (
     playerid_lookup,
     statcast_pitcher,
-    pitching_stats_range,
     pitching_stats,
     team_batting,
     cache
 )
+from pythonbaseball import pitching_stats_range
+
+import random
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+
+# --- 1. 定義列表 ---
+user_agents = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Mobile/15E148 Safari/604.1"
+]
+
+proxy_list = [
+    "103.111.144.150:80", 
+    "192.168.1.1:8888", 
+]
+
+# --- 2. 隨機選取 ---
+random_user_agent = random.choice(user_agents)
+random_proxy = random.choice(proxy_list)
+
+print(f"本次使用的 User-Agent: {random_user_agent}")
+print(f"本次使用的代理 IP: {random_proxy}")
+
+# --- 3. 設定選項 ---
+edge_options = Options()
+
+# 保持你原有的選項
+# edge_options.add_argument("--disable-blink-features=AutomationControlled")
+edge_options.add_argument("--no-sandbox")
+edge_options.add_argument("--disable-dev-shm-usage")
+edge_options.add_argument("--headless=chrome")
+edge_options.add_argument("--window-size=1920,1080")
+edge_options.add_argument("--start-maximized")
+
+# 加入隨機 User-Agent
+edge_options.add_argument(f"user-agent={random_user_agent}")
+
+# 加入隨機代理 IP
+# edge_options.add_argument(f'--proxy-server={random_proxy}')
+
+# --- 4. 啟動驅動 ---
+driver = webdriver.Chrome(options=edge_options)
 
 # ===== 快取啟用 =====
 cache.enable()  # 啟用 pybaseball 官方快取
@@ -82,7 +125,7 @@ dates = teams["game_date"].dt.strftime("%Y-%m-%d").unique().tolist()
 rows = []
 for d in dates:
     print("抓取日期:", d)
-    day = pitching_stats_range(d, d)
+    day = pitching_stats_range(driver, d, d)
     if day is None or day.empty:
         continue
     p = day[day["Name"] == DISPLAY_NAME]
@@ -178,3 +221,4 @@ if os.path.exists(OUTFILE):
     os.remove(OUTFILE)
 games_out.to_excel(OUTFILE, index=False)
 print(f"✅ 輸出完成：{OUTFILE}")
+driver.close()
