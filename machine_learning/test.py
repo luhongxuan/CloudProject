@@ -13,12 +13,13 @@ from tqdm import tqdm
 from pybaseball import (
     playerid_lookup,
     statcast_pitcher,
-    pitching_stats_range,
     pitching_stats,
     team_batting,
     cache
 )
-from undetected_chromedriver import Chrome, ChromeOptions
+from pythonbaseball import pitching_stats_range
+from selenium import webdriver
+from selenium.webdriver.edge.options import Options
 
 # ===== 快取設定 =====
 cache.purge()
@@ -86,22 +87,36 @@ fg = team_batting(YEAR).copy()
 fg["Team_std"] = fg["Team"].map(TEAM_ABBREVIATION_MAP).fillna(fg["Team"])
 
 # ===== 建立 driver 的函式 =====
-def create_driver():
-    global proxy_list
     # 每次重新抓取新 proxy pool
-    proxy_list = fetch_fresh_proxies()
-    proxy = random.choice(proxy_list)
-    print(f"🌐 使用代理 IP: {proxy}")
+    # proxy_list = fetch_fresh_proxies()
+    # proxy = random.choice(proxy_list)
+    # print(f"🌐 使用代理 IP: {proxy}")
 
-    options = ChromeOptions()
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--start-maximized")
-    options.add_argument(f"--proxy-server={proxy}")
-    driver = Chrome(options=options)
-    driver.implicitly_wait(10)
-    return driver
+    # options = ChromeOptions()
+    # options.add_argument("--no-sandbox")
+    # options.add_argument("--disable-dev-shm-usage")
+    # options.add_argument("--window-size=1920,1080")
+    # options.add_argument("--start-maximized")
+    # options.add_argument(f"--proxy-server={proxy}")
+    # driver = Chrome(options=options)
+
+user_agents = [
+"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+"Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Mobile/15E148 Safari/604.1"
+]
+
+edge_options = Options()
+edge_options.add_experimental_option("debuggerAddress", "127.0.0.1:9222")
+#edge_options.add_argument("--disable-blink-features=AutomationControlled")
+edge_options.add_argument("--no-sandbox")
+edge_options.add_argument("--disable-dev-shm-usage")
+#edge_options.add_argument("--headless=chrome")
+edge_options.add_argument("--window-size=1920,1080")  # 強制設定解析度
+edge_options.add_argument("--start-maximized")  # 避免被網站識破
+edge_options.add_argument(f"user-agent={random.choice(user_agents)}")
+driver = webdriver.Chrome(options=edge_options)
+driver.implicitly_wait(10)
 
 # ===== 主流程 =====
 for idx, row in tqdm(starters.iterrows(), total=len(starters), desc="Processing pitchers"):
@@ -142,13 +157,10 @@ for idx, row in tqdm(starters.iterrows(), total=len(starters), desc="Processing 
         teams["game_date"] = pd.to_datetime(teams["game_date"])
         dates = teams["game_date"].dt.strftime("%Y-%m-%d").unique().tolist()
 
-        # === 每位投手開一個新 driver（自動換 proxy）===
-        driver = create_driver()
-
         # === 抓逐場 ===
         rows = []
         for d in dates:
-            print(f"📅 {name} - {d}")
+            print(f"{name} - {d}")
             day = pitching_stats_range(driver, d, d)
             if day is None or day.empty:
                 continue
@@ -170,8 +182,6 @@ for idx, row in tqdm(starters.iterrows(), total=len(starters), desc="Processing 
                 "Opp": p["Opp"].iloc[0]  if "Opp"  in p.columns else None,
             }
             rows.append(rec)
-
-        driver.close()  # ✅ 每位投手結束後關閉當前 driver
 
         games = pd.DataFrame(rows)
         if games.empty:
@@ -231,5 +241,5 @@ for idx, row in tqdm(starters.iterrows(), total=len(starters), desc="Processing 
     except Exception as e:
         print(f"❌ {row.get('Name', idx)} 錯誤: {e}")
         continue
-
+driver.close()  # ✅ 每位投手結束後關閉當前 driver
 print("🎯 全部投手處理完畢！")
