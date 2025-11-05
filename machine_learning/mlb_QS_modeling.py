@@ -8,7 +8,7 @@ from sklearn.metrics import accuracy_score, classification_report, mean_squared_
 
 # --- 1. 設定：請更新您的檔案名稱 ---
 # 這是您統整好的 Excel 檔案名稱
-CONSOLIDATED_FILE = r'C:\loginonly\machine_learning\pitcher_record\all_pitchers_2024\All_Pitchers_2024_Consolidated.xlsx'
+CONSOLIDATED_FILE = r'C:\CloudProject\machine_learning\pitcher_record\All_Pitchers.xlsx'
 def load_and_prepare_data(filepath: str) -> tuple:
     """
     從指定的單一 Excel 檔案載入數據，並進行清理與特徵工程。
@@ -95,12 +95,12 @@ def train_and_evaluate_models(X: pd.DataFrame, y_qs: pd.Series, y_er: pd.Series)
     
     # (A) 劃分 QS 模型的數據 (使用 stratify 確保 QS 比例在訓練/測試集中一致)
     X_train_qs, X_test_qs, y_qs_train, y_qs_test = train_test_split(
-        X, y_qs, test_size=0.01, random_state=42, stratify=y_qs 
+        X, y_qs, test_size=0.1, random_state=42, stratify=y_qs 
     )
     
     # (B) 劃分 ER 模型的數據
     X_train_er, X_test_er, y_er_train, y_er_test = train_test_split(
-        X, y_er, test_size=0.01, random_state=42
+        X, y_er, test_size=0.1, random_state=42
     )
     
     print(f"訓練集大小: {X_train_qs.shape[0]} | 測試集大小: {X_test_qs.shape[0]}")
