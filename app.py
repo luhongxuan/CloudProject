@@ -46,7 +46,7 @@ def predict(request: Request, pitcher: str = Query(...)):
 
     q = """
       SELECT rest_days, opp_ops, is_home, avg_ip_last3, avg_er_last3,
-             season_era, season_whip, hand, opp_team, Team, pitcher
+             season_era, season_whip, hand, opp_team, team as "Team", pitcher
       FROM pitcher_features
       WHERE pitcher = %s
       ORDER BY game_date DESC
