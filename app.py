@@ -8,7 +8,7 @@ import pandas as pd
 from fastapi.responses import RedirectResponse
 
 FEATURES = ["rest_days","opp_ops","is_home","avg_ip_last3","avg_er_last3",
-            "season_era","season_whip","hand","opp_team","team","pitcher"]
+            "season_era","season_whip","hand","opp_team","Team","pitcher"]
 
 MODEL_PATH = "./artifacts_qs_xgb/qs_xgb_classifier_calibrated.joblib"
 
