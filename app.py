@@ -10,11 +10,12 @@ FEATURES = ["rest_days","opp_ops","is_home","avg_ip_last3","avg_er_last3",
 
 MODEL_PATH = "./artifacts_qs_xgb/qs_xgb_classifier_calibrated.joblib"
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # --- startup：載入模型與連線資料庫 ---
     pipe = joblib.load(MODEL_PATH)                     # sklearn Pipeline/CalibratedClassifierCV
-    db = psycopg.connect(os.environ["DATABASE_URL"])   # Render Postgres（建議用 Internal URL）
+    db = psycopg.connect(os.environ["postgresql://qs_mlb_postgres_user:kA1u3ZLqI1cxz0CSnXF6rQWKnbnaHdkn@dpg-d46538f5r7bs73av1jsg-a/qs_mlb_postgres"])   # Render Postgres（建議用 Internal URL）
     app.state.pipe = pipe
     app.state.db = db
     try:
