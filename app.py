@@ -35,10 +35,6 @@ def root():
     # 讓首頁自動導到 Swagger
     return RedirectResponse(url="/docs")
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
 @app.get("/predict")
 def predict(
     request: Request,
