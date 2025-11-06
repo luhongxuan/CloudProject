@@ -5,6 +5,8 @@ from contextlib import asynccontextmanager
 import os, joblib, psycopg
 import pandas as pd
 
+from fastapi.responses import RedirectResponse
+
 FEATURES = ["rest_days","opp_ops","is_home","avg_ip_last3","avg_er_last3",
             "season_era","season_whip","hand","opp_team","team","pitcher"]
 
@@ -27,6 +29,10 @@ async def lifespan(app: FastAPI):
             pass
 
 app = FastAPI(lifespan=lifespan)  # ← 取代 @app.on_event(...) 寫法
+
+@app.get("/")
+def root():
+    return RedirectResponse(url="/docs")
 
 @app.get("/health")
 def health():
