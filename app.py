@@ -1,6 +1,7 @@
 # app.py
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from datetime import date
 import os, joblib, psycopg
@@ -25,6 +26,9 @@ async def lifespan(app: FastAPI):
             pass
 
 app = FastAPI(lifespan=lifespan)
+
+# 掛載 /static => ./web 目錄
+app.mount("/", StaticFiles(directory="web", html=True), name="web")
 
 @app.get("/")
 def root():

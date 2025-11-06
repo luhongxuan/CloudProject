@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>QS 機率儀表</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans TC", sans-serif; background:#0b0f14; color:#e7eef7; margin:0; }
+    .wrap { max-width:800px; margin:40px auto; padding:20px; }
+    .card { background:#121821; border:1px solid #1e2633; border-radius:16px; padding:20px; box-shadow:0 6px 30px rgba(0,0,0,.35); }
+    h1 { margin-top:0; font-size:24px; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; align-items:end; }
+    label { display:block; font-size:12px; margin-bottom:6px; color:#9fb1c7; }
+    input[type="text"], input[type="date"] {
+      background:#0e141c; color:#e7eef7; border:1px solid #263142; border-radius:10px; padding:10px 12px; min-width:220px;
+    }
+    button {
+      padding:10px 16px; border-radius:10px; border:0; background:#2b81ff; color:white; cursor:pointer;
+    }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    .result { margin-top:18px; color:#9fb1c7; }
+    /* Gauge container */
+    .gauge { width:480px; max-width:100%; margin:24px auto; display:block; }
+    .center { text-align:center; }
+    .prob { font-size:28px; margin-top:8px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>優質先發（QS）機率預測</h1>
+      <div class="row">
+        <div>
+          <label for="pitcher">投手姓名（例：Yoshinobu Yamamoto）</label>
+          <input id="pitcher" type="text" placeholder="輸入投手全名" />
+        </div>
+        <div>
+          <label for="date">日期（可留空：取最近一場）</label>
+          <input id="date" type="date" />
+        </div>
+        <div>
+          <button id="go">查詢預測</button>
+        </div>
+      </div>
+
+      <!-- SVG Gauge -->
+      <div class="center">
+        <svg class="gauge" viewBox="0 0 200 120">
+          <!-- 底弧 -->
+          <path d="M10,110 A90,90 0 0,1 190,110" fill="none" stroke="#1e2633" stroke-width="18" />
+          <!-- 彩色進度弧：用 stroke-dasharray 控制 -->
+          <path id="arc" d="M10,110 A90,90 0 0,1 190,110" fill="none" stroke="#2b81ff" stroke-width="18"
+                stroke-linecap="round" stroke-dasharray="0 283" />
+          <!-- 指針 -->
+          <g id="needle" transform="rotate(180,100,110)">
+            <line x1="100" y1="110" x2="100" y2="26" stroke="#e7eef7" stroke-width="3"/>
+            <circle cx="100" cy="110" r="5" fill="#e7eef7"/>
+          </g>
+          <!-- 刻度文字 -->
+          <text x="10"  y="118" fill="#9fb1c7" font-size="10">0%</text>
+          <text x="94"  y="118" fill="#9fb1c7" font-size="10">50%</text>
+          <text x="178" y="118" fill="#9fb1c7" font-size="10">100%</text>
+        </svg>
+        <div id="prob" class="prob">—</div>
+        <div id="meta" class="result"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const btn   = document.getElementById('go');
+    const iptP  = document.getElementById('pitcher');
+    const iptD  = document.getElementById('date');
+    const probT = document.getElementById('prob');
+    const metaT = document.getElementById('meta');
+    const arc   = document.getElementById('arc');
+    const needle= document.getElementById('needle');
+
+    // 半圓長度 ≈ 283（90*π*2 的一半）；用 stroke-dasharray 控制填滿比例
+    const ARC_LEN = 283;
+
+    function animateGauge(p) {
+      const clamped = Math.max(0, Math.min(1, p));
+      // 弧長動畫
+      const targetDash = `${(ARC_LEN * clamped).toFixed(1)} ${ARC_LEN}`;
+      arc.style.transition = 'stroke-dasharray 600ms ease';
+      arc.setAttribute('stroke-dasharray', targetDash);
+      // 指針動畫：0% 在 180deg，100% 在 0deg
+      const deg = 180 * (1 - clamped);
+      needle.style.transition = 'transform 600ms ease';
+      needle.setAttribute('transform', `rotate(${deg},100,110)`);
+      // 文字
+      probT.textContent = `${(clamped*100).toFixed(1)}%`;
+    }
+
+    async function run() {
+      const pitcher = iptP.value.trim();
+      const date = iptD.value ? `&game_date=${iptD.value}` : '';
+      if (!pitcher) { alert('請輸入投手姓名'); return; }
+      btn.disabled = true;
+
+      try {
+        const res = await fetch(`/predict?pitcher=${encodeURIComponent(pitcher)}${date}`);
+        if (!res.ok) {
+          const msg = await res.text();
+          throw new Error(`HTTP ${res.status}: ${msg}`);
+        }
+        const data = await res.json();
+        animateGauge(Number(data.qs_prob || 0));
+        metaT.textContent = `Pitcher: ${data.pitcher} ｜ Date: ${data.game_date}`;
+      } catch (e) {
+        console.error(e);
+        animateGauge(0);
+        metaT.textContent = '查詢失敗，請確認投手名稱/日期或稍後重試';
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    btn.addEventListener('click', run);
+    // Enter 觸發
+    iptP.addEventListener('keydown', (e)=>{ if(e.key==='Enter') run(); });
+    iptD.addEventListener('keydown', (e)=>{ if(e.key==='Enter') run(); });
+  </script>
+</body>
+</html>
