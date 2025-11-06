@@ -27,13 +27,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# 掛載 /static => ./web 目錄
-app.mount("/", StaticFiles(directory="web", html=True), name="web")
 
-@app.get("/")
-def root():
-    # 讓首頁自動導到 Swagger
-    return RedirectResponse(url="/docs")
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 @app.get("/predict")
 def predict(
@@ -83,3 +80,6 @@ def predict(
         "game_date": (game_date.isoformat() if game_date else "latest"),
         "qs_prob": prob
     }
+
+# 掛載 /static => ./web 目錄
+app.mount("/", StaticFiles(directory="web", html=True), name="web")
