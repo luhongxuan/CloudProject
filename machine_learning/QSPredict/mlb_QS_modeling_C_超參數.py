@@ -130,7 +130,7 @@ for k in ["test_roc_auc","test_average_precision","test_neg_brier_score","test_a
 
 # ====== 機率校準（isotonic；資料少可改 sigmoid）======
 try:
-    calibrated = CalibratedClassifierCV(estimator=pipe_base, method="isotonic", cv=tscv)
+    ibrated = CalibratedClassifierCV(estimator=pipe_base, method="isotonic", cv=tscv)
 except TypeError:  # 舊版 fallback
     calibrated = CalibratedClassifierCV(base_estimator=pipe_base, method="isotonic", cv=tscv)
 calibrated.fit(X_tr, y_tr)
