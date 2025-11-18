@@ -1,18 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-QS (Quality Start) 強化版訓練腳本
-改進點：
-1) 時間序交叉驗證 TimeSeriesSplit + 報告 AUC/PR-AUC/Brier/Acc
-2) 機率校準 CalibratedClassifierCV（isotonic 或 sigmoid）
-3) 自動處理不平衡：scale_pos_weight = neg / pos
-4) 在訓練集末段切一個 validation fold 搜尋最佳決策閾值（非固定 0.5）
-5) 產出：校準後模型 + 最佳閾值 + 評估報表 + ROC 圖
-
-參考：
-- TimeSeriesSplit（避免用未來資料評估過去）: scikit-learn docs
-- 機率校準/ Brier score：scikit-learn docs
-- XGBoost scale_pos_weight：常用為 neg/pos
-"""
 from __future__ import annotations
 from pathlib import Path
 import json
@@ -36,7 +22,7 @@ from xgboost import XGBClassifier, XGBRegressor
 
 # ====== 路徑 ======
 DATA_PATH = Path(r'C:\CloudProject\machine_learning\pitcher_record\All_Pitchers.xlsx')
-ART_DIR = Path("./artifacts_qs_xgb")
+ART_DIR = Path(r"C:\CloudProject\artifacts_qs_xgb")
 ART_DIR.mkdir(parents=True, exist_ok=True)
 
 # ====== 小工具 ======
@@ -128,9 +114,14 @@ print("CV scores (mean ± std):")
 for k in ["test_roc_auc","test_average_precision","test_neg_brier_score","test_accuracy"]:
     print(f" - {k}: {np.mean(cv[k]):.3f} ± {np.std(cv[k]):.3f}")
 
+# === 新增：為 SHAP 解釋準備「完整訓練好的原始 pipeline」 ===
+pipe_base.fit(X_tr, y_tr)
+joblib.dump(pipe_base, ART_DIR / "qs_xgb_pipeline_raw.joblib")
+print("Saved raw pipeline for SHAP:", ART_DIR / "qs_xgb_pipeline_raw.joblib")
+
 # ====== 機率校準（isotonic；資料少可改 sigmoid）======
 try:
-    ibrated = CalibratedClassifierCV(estimator=pipe_base, method="isotonic", cv=tscv)
+    calibrated = CalibratedClassifierCV(estimator=pipe_base, method="isotonic", cv=tscv)
 except TypeError:  # 舊版 fallback
     calibrated = CalibratedClassifierCV(base_estimator=pipe_base, method="isotonic", cv=tscv)
 calibrated.fit(X_tr, y_tr)
@@ -192,8 +183,10 @@ er_res = fit_regression("ER", "er")
 ip_res = fit_regression("IP_float", "ip")
 
 # ====== 輸出：校準模型 + 閾值 + 報表 ======
+# 1) 存校準後模型
 model_path = ART_DIR / "qs_xgb_classifier_calibrated.joblib"
 joblib.dump(calibrated, model_path)
+
 
 with open(ART_DIR / "qs_best_threshold.json", "w", encoding="utf-8") as f:
     json.dump({"best_threshold": best_threshold}, f, ensure_ascii=False, indent=2)

@@ -1,19 +1,15 @@
 # -*- coding: utf-8 -*-
-"""
-用「同一場」賽前特徵預測該場的優質先發(QS)機率與結果，並計算成功率（若有標籤）
-輸入: C:\\CloudProject\\machine_learning\\pitcher_record\\all_pitchers_2024\\All_Pitchers_2024_Consolidated.xlsx
-模型(建議): .\\artifacts_qs_xgb\\qs_xgb_classifier_calibrated.joblib
-輸出: 同資料夾，檔名加 _qs_pred.xlsx
-"""
 from pathlib import Path
+import json              # === 新增：讀取 json 用 ===
 import numpy as np
 import pandas as pd
 import joblib
 from sklearn.metrics import accuracy_score, brier_score_loss, roc_auc_score, average_precision_score
 
 # === 路徑 ===
-MODEL_PATH = Path(r'.\artifacts_qs_xgb\qs_xgb_classifier_calibrated.joblib')  # 校準後模型
-INPUT_XLSX = Path(r'C:\CloudProject\machine_learning\pitcher_record\all_pitchers_2024\All_Pitchers_2024_Consolidated.xlsx')
+MODEL_PATH = Path(r'C:\CloudProject\artifacts_qs_xgb\qs_xgb_classifier_calibrated.joblib')  # 校準後模型
+THRESH_PATH = Path(r'C:\CloudProject\artifacts_qs_xgb\qs_best_threshold.json')              # === 新增：最佳閥值 json ===
+INPUT_XLSX = Path(r'C:\CloudProject\machine_learning\pitcher_record\all_pitchers_2025\All_Pitchers_2025_Consolidated.xlsx')
 
 # 與訓練時一致的特徵（同場賽前可得）
 FEATURES = [
@@ -32,12 +28,34 @@ def parse_ip(ip):
     except Exception:
         return np.nan
 
+def load_best_threshold(default: float = 0.5) -> float:
+    """從 qs_best_threshold.json 讀取 best_threshold；失敗就用預設值。"""
+    t = default
+    if THRESH_PATH.exists():
+        try:
+            with open(THRESH_PATH, "r", encoding="utf-8") as f:
+                obj = json.load(f)
+            if "best_threshold" in obj:
+                t = float(obj["best_threshold"])
+                print(f"使用 json 閥值 best_threshold = {t:.3f}")
+            else:
+                print(f"[警告] {THRESH_PATH} 中沒有 best_threshold 欄位，改用預設 {default:.2f}")
+        except Exception as e:
+            print(f"[警告] 讀取 {THRESH_PATH} 失敗：{e}，改用預設 {default:.2f}")
+    else:
+        print(f"[提示] 找不到 {THRESH_PATH}，改用預設閥值 {default:.2f}")
+    return t
+
 def main():
-    # 1) 載入模型（Pipeline/CalibratedClassifierCV 皆可直接 predict_proba）
+    # 1) 載入模型
     if not MODEL_PATH.exists():
         raise FileNotFoundError(f"找不到模型: {MODEL_PATH}")
-    pipe = joblib.load(MODEL_PATH)  # 前處理 + 分類器一體化。:contentReference[oaicite:2]{index=2}
+    pipe = joblib.load(MODEL_PATH)
 
+    # === 新增：載入最佳閥值 ===
+    # best_t = load_best_threshold(default=0.5)
+    best_t = 0.5
+    
     # 2) 讀取資料
     if not INPUT_XLSX.exists():
         raise FileNotFoundError(f"找不到輸入檔: {INPUT_XLSX}")
@@ -58,10 +76,10 @@ def main():
     if missing:
         raise KeyError(f"輸入檔缺少必要欄位: {missing}")
 
-    # 5) 直接用「同一場」特徵做推論（不做 shift）
+    # 5) 用「同一場」特徵做推論
     X = df[FEATURES].copy()
-    qs_prob = pipe.predict_proba(X)[:, 1]  # Pipeline 會先做 transform 再呼叫最終 estimator 的 predict_proba。:contentReference[oaicite:3]{index=3}
-    qs_pred = (qs_prob >= 0.5).astype(int) # 若你有最佳閾值，可改成讀 json 使用
+    qs_prob = pipe.predict_proba(X)[:, 1]
+    qs_pred = (qs_prob >= best_t).astype(int)   # <<< 改成用 json 閥值
 
     # 6) 輸出與（可選）評估
     out = df.copy()
@@ -75,7 +93,7 @@ def main():
         y_pred  = out.loc[has_label, "qs_pred"].astype(int).values
 
         acc   = accuracy_score(y_true, y_pred)
-        brier = brier_score_loss(y_true, y_score)  # Brier 越小越好。:contentReference[oaicite:4]{index=4}
+        brier = brier_score_loss(y_true, y_score)
         if len(np.unique(y_true)) > 1:
             auc   = roc_auc_score(y_true, y_score)
             prauc = average_precision_score(y_true, y_score)
@@ -90,7 +108,7 @@ def main():
     else:
         print("無真實 QS 標籤，僅輸出機率與預測結果。")
 
-    # 7) 輸出 Excel（同資料夾，_qs_pred 後綴）
+    # 7) 輸出 Excel
     out_path = INPUT_XLSX.with_name(INPUT_XLSX.stem + "_qs_pred.xlsx")
     out.to_excel(out_path, index=False)
     print(f"已輸出：{out_path}")
